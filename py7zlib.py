@@ -28,6 +28,7 @@ from array import array
 from binascii import unhexlify
 from datetime import datetime
 import pylzma
+import lzma
 from struct import pack, unpack
 from zlib import crc32
 import zlib
@@ -140,6 +141,7 @@ COMPRESSION_METHOD_MISC          = unhexlify('04')  # '\x04'
 COMPRESSION_METHOD_MISC_ZIP      = unhexlify('0401')  # '\x04\x01'
 COMPRESSION_METHOD_MISC_BZIP     = unhexlify('0402')  # '\x04\x02'
 COMPRESSION_METHOD_7Z_AES256_SHA256 = unhexlify('06f10701')  # '\x06\xf1\x07\x01'
+COMPRESSION_METHOD_LZMA2         = unhexlify('21')  # '\x21'
 
 # number of seconds between 1601/01/01 and 1970/01/01 (UTC)
 # used to adjust 7z FILETIME to Python timestamp
@@ -584,6 +586,7 @@ class ArchiveFile(Base):
         self._decoders = {
             COMPRESSION_METHOD_COPY: '_read_copy',
             COMPRESSION_METHOD_LZMA: '_read_lzma',
+            COMPRESSION_METHOD_LZMA2: '_read_lzma2',
             COMPRESSION_METHOD_MISC_ZIP: '_read_zip',
             COMPRESSION_METHOD_MISC_BZIP: '_read_bzip',
             COMPRESSION_METHOD_7Z_AES256_SHA256: '_read_7z_aes256_sha256',
@@ -628,9 +631,6 @@ class ArchiveFile(Base):
         data = ''
         idx = 0
         cnt = 0
-        properties = coder.get('properties', None)
-        if properties:
-            decompressor.decompress(properties)
         total = self.compressed
         if not input and total is None:
             remaining = self._start+size
@@ -671,14 +671,27 @@ class ArchiveFile(Base):
         return data[self._start:self._start+size]
     
     def _read_lzma(self, coder, input, level):
-        size = self._uncompressed[level]
-        dec = pylzma.decompressobj(maxlength=self._start+size)
+        properties = coder.get('properties', None)
+        lzma_props = lzma._decode_filter_properties(lzma.FILTER_LZMA1, properties)
+        dec = lzma.LZMADecompressor(format=lzma.FORMAT_RAW, filters=[lzma_props])
         try:
             return self._read_from_decompressor(coder, dec, input, level, checkremaining=True, with_cache=True)
-        except ValueError:
+        except lzma.LZMAError:
             if self._is_encrypted():
                 raise WrongPasswordError('invalid password')
             
+            raise
+
+    def _read_lzma2(self, coder, input, level):
+        properties = coder.get('properties', None)
+        lzma_props = lzma._decode_filter_properties(lzma.FILTER_LZMA2, properties)
+        dec = lzma.LZMADecompressor(format=lzma.FORMAT_RAW, filters=[lzma_props])
+        try:
+            return self._read_from_decompressor(coder, dec, input, level, checkremaining=True, with_cache=True)
+        except lzma.LZMAError:
+            if self._is_encrypted():
+                raise WrongPasswordError('invalid password')
+
             raise
         
     def _read_zip(self, coder, input, level):

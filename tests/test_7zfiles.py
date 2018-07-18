@@ -25,7 +25,6 @@
 from datetime import datetime
 import errno
 import os
-import pylzma
 from py7zlib import Archive7z, NoPasswordGivenError, WrongPasswordError, UTC
 import sys
 import unittest
@@ -194,6 +193,10 @@ class Test7ZipFiles(unittest.TestCase):
     def test_copy(self):
         # test loading of copy compressed files
         self._test_archive('copy.7z')
+
+    def test_lzma2(self):
+        # test loading of lzma2 compressed files
+        self._test_archive('lzma2.7z')
 
     def test_regress_1(self):
         # prevent regression bug #1 reported by mail
