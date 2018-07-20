@@ -271,22 +271,28 @@ class SZFile:
         self._write_64_bit(numfiles, self._end_header)
 
         # Write dummy prop
-        self._end_header.write(_FILE_PROPERTY_DUMMY)
-        self._write_64_bit(9, self._end_header)   # size
-        self._end_header.seek(9, os.SEEK_CUR)   # size = 9 is magic right now
+        # self._end_header.write(_FILE_PROPERTY_DUMMY)
+        # self._write_64_bit(9, self._end_header)   # size
+        # self._end_header.seek(9, os.SEEK_CUR)   # size = 9 is magic right now
 
         # Write filename
+        additional_data_len = 3
         self._end_header.write(_FILE_PROPERTY_NAME)
-        self._write_64_bit(17, self._end_header)  # filename size
-        self._end_header.write(unhexlify('00'))     # External flag set to 0
-        encoded_name = 'LICENSE'.encode('utf-16')[2:]   # Encoded filename without bom
-        self._end_header.write(encoded_name)
-        self._end_header.write(unhexlify('0000'))
+        size = additional_data_len
+        for f in self._files.values():
+            size += len(f.filename)*2
+
+        self._write_64_bit(size, self._end_header)  # filename size
+        self._end_header.write(unhexlify('00'))  # External flag set to 0
+        for f in self._files.values():
+            encoded_name = f.filename.encode('utf-16')[2:]   # Encoded filename without bom
+            self._end_header.write(encoded_name)
+            self._end_header.write(unhexlify('0000'))
 
         # Write dummy prop
-        self._end_header.write(_FILE_PROPERTY_DUMMY)
-        self._write_64_bit(2, self._end_header)  # size
-        self._end_header.seek(2, os.SEEK_CUR)  # size = 9 is magic right now
+        # self._end_header.write(_FILE_PROPERTY_DUMMY)
+        # self._write_64_bit(2, self._end_header)  # size
+        # self._end_header.seek(2, os.SEEK_CUR)  # size = 9 is magic right now
 
         # Write last modify time
         self._end_header.write(_FILE_PROPERTY_LAST_WRITE_TIME)
