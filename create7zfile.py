@@ -1,8 +1,10 @@
 import os
 import io
 import lzma
-from binascii import unhexlify, crc32
+from binascii import unhexlify
+from zlib import crc32
 from struct import pack
+from collections import OrderedDict
 
 compression_lzma = 1
 compression_lzma2 = 2
@@ -31,21 +33,22 @@ _FILE_PROPERTY_ATTRIBUTES = unhexlify('15')
 _TIMESTAMP_ADJUST = -11644473600
 
 
-def sztime_from_timestamp(timestamp):
+def timestamp_from_sztime(timestamp):
     return (timestamp / 10000000.0) + _TIMESTAMP_ADJUST
 
 
-def timestamp_from_sztime(sztime):
+def sztime_from_timestamp(sztime):
     return (sztime - _TIMESTAMP_ADJUST) * 10000000.0
 
 
 class SZInfo:
     def __init__(self, filename, modify_time, uncompressed_size, attributes):
         self.filename = filename
-        self.modify_time = modify_time
         self.uncompressed_size = uncompressed_size
         self.attributes = attributes
         self.compressed_size = 0
+        self.crc = 0
+        self.modify_time = modify_time
 
 
 class SZFile:
@@ -53,7 +56,7 @@ class SZFile:
         self._fd = open(filename, 'wb')
         self._compression = compression
         self._header_written = False
-        self._files = list()
+        self._files = OrderedDict()
         self._src_pos = 32
         self._end_header_pos = None
         self._end_header = None
@@ -73,6 +76,7 @@ class SZFile:
         sz_info = SZInfo(filename, _stat.st_mtime, _stat.st_size, 8192)
 
         self._compress(filename, sz_info)
+        self._files[filename] = sz_info
         # Write lzma file
 
         self._write_end_header()
@@ -92,6 +96,7 @@ class SZFile:
                 compressed_data = compressor.compress(data)
                 self._fd.write(compressed_data)
                 sz_info.compressed_size += len(compressed_data)
+                sz_info.crc = crc32(data, sz_info.crc)
 
             compressed_data = compressor.flush()
             self._fd.write(compressed_data)
@@ -144,12 +149,14 @@ class SZFile:
         self._write_64_bit(0, self._end_header)
 
         # Num streams 64bit
-        self._write_64_bit(1, self._end_header)
+        streams = len(self._files)
+        self._write_64_bit(streams, self._end_header)
 
         self._end_header.write(_PROPERTY_SIZE)
 
         # For each stream write pack size 64bit
-        self._write_64_bit(8911, self._end_header)
+        for f in self._files.values():
+            self._write_64_bit(f.compressed_size, self._end_header)
 
         # For each stream write crc32 64bit (optional)
         # Write _PROPERTY_END
@@ -183,7 +190,8 @@ class SZFile:
         self._end_header.write(_PROPERTY_FOLDER)
 
         # Num folders 64bit
-        self._write_64_bit(1, self._end_header)
+        folders = len(self._files)
+        self._write_64_bit(folders, self._end_header)
 
         # External flag \x00
         self._end_header.write(unhexlify('00'))
@@ -192,7 +200,8 @@ class SZFile:
         # Write _PROPERTY_CODERS_UNPACK_SIZE
         self._end_header.write(_PROPERTY_CODERS_UNPACK_SIZE)
         # For each folder write unpack size 64bit
-        self._write_64_bit(26948, self._end_header)
+        for f in self._files.values():
+            self._write_64_bit(f.uncompressed_size, self._end_header)
 
         # Write _PROPERTY_CRC
         # Write crc for each folder 4byte
@@ -251,13 +260,15 @@ class SZFile:
         self._end_header.write(b'\x01')
 
         # Pack crc to UINT32
-        packed_crc = pack('L', 4090972253)
-        self._end_header.write(packed_crc)
+        for f in self._files.values():
+            packed_crc = pack('L', f.crc)
+            self._end_header.write(packed_crc)
 
     def _write_files_info(self):
         self._end_header.write(_PROPERTY_FILES_INFO)
         # Write numfiles
-        self._write_64_bit(1, self._end_header)
+        numfiles = len(self._files.values())
+        self._write_64_bit(numfiles, self._end_header)
 
         # Write dummy prop
         self._end_header.write(_FILE_PROPERTY_DUMMY)
